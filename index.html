@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>イラスト参考用 3D ビューア（統合版）</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin:0; height:100%; background:#0f0f0f; color:#eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, sans-serif; }
+    #ui {
+      position: fixed; left:0; right:0; top:0; z-index:10;
+      display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; padding:.5rem .6rem;
+      background: rgba(0,0,0,.35); backdrop-filter: blur(8px);
+    }
+    .grp { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+    label { font-size:.85rem; opacity:.9; }
+    input[type="range"] { width:120px; }
+    select, button, input[type="file"], input[type="color"], input[type="text"], textarea {
+      color:#eee; background:#222; border:1px solid #555; padding:.35rem .55rem; border-radius:.4rem; font-size:.9rem;
+    }
+    button { cursor:pointer; }
+    #canvas { width:100vw; height:100vh; display:block; }
+    #overlay { position: fixed; inset:0; pointer-events:none; z-index:5; }
+    .grid { position:absolute; inset:0; }
+    .sep { width:100%; height:1px; background:rgba(255,255,255,.08); margin:.25rem 0; }
+    .warn { color:#ffcc88; font-size:.8rem; opacity:.8; }
+    @media (pointer: coarse) {
+      button, select, input[type="range"], input[type="file"], input[type="text"], textarea { min-height: 44px; font-size: 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <!-- キャラ＆スクショ -->
+    <div class="grp">
+      <input id="fileChar" type="file" accept=".glb,.gltf" />
+      <span id="charName" style="opacity:.8;"></span>
+      <button id="shot">📸 PNG保存</button>
+    </div>
+
+    <!-- 視点＆FOV＆ライト -->
+    <div class="grp">
+      <label>視点:</label>
+      <button data-view="front">正面</button>
+      <button data-view="side">側面</button>
+      <button data-view="back">背面</button>
+      <button data-view="top">俯瞰</button>
+      <button data-view="low">煽り</button>
+    </div>
+    <div class="grp">
+      <label>FOV:</label><input id="fov" type="range" min="20" max="85" step="1" value="50" /><span id="fovv">50</span>
+      <label>ライト:</label>
+      <select id="lightPreset">
+        <option value="threePoint">3点照明</option>
+        <option value="rim">リム強調</option>
+        <option value="dramatic">ドラマティック</option>
+      </select>
+      <label>強さ</label><input id="lightIntensity" type="range" min="0" max="2.5" step="0.05" value="1.2" />
+    </div>
+
+    <!-- 構図ガイド -->
+    <div class="grp">
+      <label>構図ガイド:</label>
+      <label><input id="guideThirds" type="checkbox" checked />3分割</label>
+      <label><input id="guideCenter" type="checkbox" />中心十字</label>
+      <label><input id="guideGrid" type="checkbox" />パース格子</label>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- HDRI環境光 -->
+    <div class="grp">
+      <label>HDRI:</label>
+      <input id="hdrFile" type="file" accept=".hdr,.exr" />
+      <label>Env強度</label><input id="envInt" type="range" min="0" max="2" step="0.05" value="1.0" />
+      <label><input id="hdrAsBg" type="checkbox" />背景として使う</label>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- ポーズプリセット -->
+    <div class="grp">
+      <label>ポーズ:</label>
+      <select id="posePreset">
+        <option value="reset">リセット（Aに近い）</option>
+        <option value="tPose">Tポーズ</option>
+        <option value="idle">立ち（ニュートラル）</option>
+        <option value="run">走り</option>
+        <option value="jump">ジャンプ</option>
+        <option value="idol">アイドルポーズ</option>
+      </select>
+      <button id="applyPose">適用</button>
+    </div>
+
+    <!-- 手首＆指（カール＋開き） -->
+    <div class="grp">
+      <label>手側:</label>
+      <select id="handSide"><option value="L">左</option><option value="R">右</option></select>
+      <label>Pitch</label><input id="wPitch" type="range" min="-90" max="90" step="1" value="0" />
+      <label>Yaw</label><input id="wYaw" type="range" min="-90" max="90" step="1" value="0" />
+      <label>Roll</label><input id="wRoll" type="range" min="-180" max="180" step="1" value="0" />
+      <button id="handReset">手リセット</button>
+    </div>
+    <div class="grp">
+      <label>カール:</label>
+      <label>親</label><input id="thumbCurl" type="range" min="0" max="90" step="1" value="0" />
+      <label>人</label><input id="indexCurl" type="range" min="0" max="90" step="1" value="0" />
+      <label>中</label><input id="middleCurl" type="range" min="0" max="90" step="1" value="0" />
+      <label>薬</label><input id="ringCurl" type="range" min="0" max="90" step="1" value="0" />
+      <label>小</label><input id="pinkyCurl" type="range" min="0" max="90" step="1" value="0" />
+      <button id="fingersCurlReset">カールリセット</button>
+    </div>
+    <div class="grp">
+      <label>開き軸:</label>
+      <select id="spreadAxis"><option value="auto">Auto</option><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+      <label>親</label><input id="thumbSpread" type="range" min="-45" max="45" step="1" value="0" />
+      <label>人</label><input id="indexSpread" type="range" min="-30" max="30" step="1" value="0" />
+      <label>中</label><input id="middleSpread" type="range" min="-30" max="30" step="1" value="0" />
+      <label>薬</label><input id="ringSpread" type="range" min="-30" max="30" step="1" value="0" />
+      <label>小</label><input id="pinkySpread" type="range" min="-30" max="30" step="1" value="0" />
+      <button id="fingersSpreadReset">開きリセット</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- 体型調整（性別・頭身） -->
+    <div class="grp">
+      <label>体型プリセット:</label>
+      <select id="bodyPreset">
+        <option value="neutral">中性</option>
+        <option value="masc">マスキュリン</option>
+        <option value="fem">フェミニン</option>
+      </select>
+      <button id="applyBodyPreset">適用</button>
+      <button id="bodyReset">体型リセット</button>
+      <span id="headsOut" style="opacity:.8; margin-left:.5rem;">推定頭身: 7.0</span>
+    </div>
+    <div class="grp">
+      <label>身長</label><input id="heightScale" type="range" min="0.90" max="1.10" step="0.01" value="1.00" />
+      <label>頭サイズ</label><input id="headScale" type="range" min="0.80" max="1.30" step="0.01" value="1.00" />
+      <label>肩幅</label><input id="shoulderWidth" type="range" min="0.80" max="1.30" step="0.01" value="1.00" />
+      <label>腰幅</label><input id="hipWidth" type="range" min="0.80" max="1.30" step="0.01" value="1.00" />
+    </div>
+    <div class="grp">
+      <label>体幹長</label><input id="torsoLen" type="range" min="0.90" max="1.10" step="0.01" value="1.00" />
+      <label>脚長</label><input id="legLen" type="range" min="0.90" max="1.10" step="0.01" value="1.00" />
+      <label>腕長</label><input id="armLen" type="range" min="0.90" max="1.10" step="0.01" value="1.00" />
+      <label>厚み</label><input id="bodyThickness" type="range" min="0.90" max="1.10" step="0.01" value="1.00" />
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- 背景編集＆ライブラリ＆インスタンス -->
+    <div class="grp">
+      <label>編集モード:</label>
+      <label><input id="bgEdit" type="checkbox" />背景編集</label>
+      <label><input id="multiSel" type="checkbox" />複数選択</label>
+      <select id="tcMode">
+        <option value="translate">移動</option>
+        <option value="rotate">回転</option>
+        <option value="scale">拡大</option>
+      </select>
+      <label>移動Snap</label><input id="snapPos" type="range" min="0" max="1" step="0.01" value="0" />
+      <label>回転Snap</label><input id="snapRot" type="range" min="0" max="90" step="1" value="0" />
+      <button id="dropToFloor">床合わせ</button>
+      <button id="groupMake">グループ化</button>
+      <button id="groupBreak">グループ解除</button>
+    </div>
+
+    <div class="grp">
+      <label>ライブラリ:</label>
+      <button data-lib="spot">スポットライト</button>
+      <button data-lib="speaker">スピーカー</button>
+      <button data-lib="truss">トラス</button>
+      <button data-lib="banner">バナー</button>
+      <button data-lib="deskset">机セット</button>
+      <button data-lib="locker">ロッカー</button>
+      <input id="bgFile" type="file" accept=".glb,.gltf" />
+    </div>
+
+    <div class="grp">
+      <label>インスタンス:</label>
+      <select id="instType">
+        <option value="chair">椅子</option>
+        <option value="column">柱</option>
+        <option value="lamp">ランプ</option>
+      </select>
+      <label>行</label><input id="instRows" type="number" min="1" max="100" value="4" />
+      <label>列</label><input id="instCols" type="number" min="1" max="100" value="8" />
+      <label>間隔X</label><input id="instSpacingX" type="number" min="0.1" step="0.1" value="1.2" />
+      <label>間隔Z</label><input id="instSpacingZ" type="number" min="0.1" step="0.1" value="1.0" />
+      <label>ランダム</label><input id="instJitter" type="range" min="0" max="0.5" step="0.01" value="0.05" />
+      <button id="instAdd">追加</button>
+      <button id="instBake">個別メッシュへ展開</button>
+    </div>
+
+    <div class="grp">
+      <label>選択:</label>
+      <select id="objectList"><option>(未選択)</option></select>
+      <button id="duplicate">複製</button>
+      <button id="delete">削除</button>
+      <button id="mirrorX">X対称コピー</button>
+      <button id="toggleVis">表示/非表示</button>
+      <button id="toggleLock">ロック</button>
+    </div>
+
+    <div class="grp">
+      <label>素材プリセット:</label>
+      <select id="matPreset">
+        <option value="matte">Matte</option>
+        <option value="plastic">Plastic</option>
+        <option value="metal">Metal</option>
+        <option value="neon">Neon</option>
+      </select>
+      <label>色</label><input id="matColor" type="color" value="#7aa0ff" />
+      <label>粗さ</label><input id="matRough" type="range" min="0" max="1" step="0.01" value="0.7" />
+      <label>金属</label><input id="matMetal" type="range" min="0" max="1" step="0.01" value="0.0" />
+      <label>発光強</label><input id="matEmiInt" type="range" min="0" max="2" step="0.05" value="0.0" />
+      <button id="applyMat">選択に適用</button>
+    </div>
+
+    <div class="grp">
+      <label>テクスチャ:</label>
+      <input id="texFile" type="file" accept="image/*" />
+      <label>Uタイル</label><input id="tileU" type="range" min="0.1" max="10" step="0.1" value="1" />
+      <label>Vタイル</label><input id="tileV" type="range" min="0.1" max="10" step="0.1" value="1" />
+      <button id="clearTex">解除</button>
+    </div>
+
+    <div class="grp">
+      <button id="exportGLB">背景をGLB保存</button>
+    </div>
+
+    <div class="grp">
+      <label>背景プリセット:</label>
+      <select id="bgPreset">
+        <option value="none">なし</option>
+        <option value="studio">スタジオ</option>
+        <option value="stage">ステージ</option>
+        <option value="skybox">スカイボックス</option>
+      </select>
+      <label>BGスケール</label><input id="bgScale" type="range" min="0.5" max="3" step="0.1" value="1" />
+      <button id="bgReset">BGリセット</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- プリセット保存／読込（ローカル＆JSON） -->
+    <div class="grp">
+      <label>キャラプリセット名</label>
+      <input id="presetName" type="text" placeholder="例: 走り_ステージ照明" />
+      <button id="presetSaveLocal">ローカル保存</button>
+      <select id="presetList"><option>(保存済みなし)</option></select>
+      <button id="presetLoadLocal">読込</button>
+      <button id="presetDeleteLocal">削除</button>
+      <button id="presetExportJSON">JSON書き出し</button>
+      <input id="presetImportJSON" type="file" accept=".json" />
+    </div>
+
+    <!-- ボーン命名プロファイル＆カスタムマッピング -->
+    <div class="grp">
+      <label>ボーンプロファイル:</label>
+      <select id="boneProfile">
+        <option value="auto">Auto（汎用）</option>
+        <option value="mixamo">Mixamo</option>
+        <option value="vrm">VRM/UniVRM</option>
+        <option value="mmd">MMD</option>
+        <option value="custom">カスタム</option>
+      </select>
+      <button id="applyBoneProfile">適用</button>
+    </div>
+    <div class="grp">
+      <label>カスタムマッピング(JSON)</label>
+      <textarea id="boneProfileJSON" rows="4" cols="50" placeholder='{"upperarm":["UpperArm"],"lowerarm":["LowerArm"],"hand":["Hand"],"thumb":["Thumb"],"index":["Index"]}'></textarea>
+      <button id="applyCustomMapping">読込</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- 表示 -->
+    <div class="grp">
+      <label>表示:</label>
+      <label><input id="outline" type="checkbox" checked />輪郭</label>
+      <label><input id="bgGrad" type="checkbox" checked />背景グラデ</label>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <!-- 構図ガイド -->
+  <svg id="overlay">
+    <g id="thirds" class="grid" stroke="rgba(255,255,255,.35)" stroke-width="1">
+      <line x1="33.33%" y1="0" x2="33.33%" y2="100%" />
+      <line x1="66.66%" y1="0" x2="66.66%" y2="100%" />
+      <line x1="0" y1="33.33%" x2="100%" y2="33.33%" />
+      <line x1="0" y1="66.66%" x2="100%" y2="66.66%" />
+    </g>
+    <g id="center" class="grid" stroke="rgba(255,255,255,.45)" stroke-width="1">
+      <line x1="50%" y1="0" x2="50%" y2="100%" />
+      <line x1="0" y1="50%" x2="100%" y2="50%" />
+    </g>
+    <g id="grid" class="grid" stroke="rgba(255,255,255,.2)" stroke-width="1"></g>
+  </svg>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.165.0/build/three.module.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js";
+    import { EffectComposer } from "https://unpkg.com/three@0.165.0/examples/jsm/postprocessing/EffectComposer.js";
+    import { RenderPass } from "https://unpkg.com/three@0.165.0/examples/jsm/postprocessing/RenderPass.js";
+    import { OutlinePass } from "https://unpkg.com/three@0.165.0/examples/jsm/postprocessing/OutlinePass.js";
+    import { TransformControls } from "https://unpkg.com/three@0.165.0/examples/jsm/controls/TransformControls.js";
+    import { GLTFLoader } from "https://unpkg.com/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
+    import { DRACOLoader } from "https://unpkg.com/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
+    import { KTX2Loader } from "https://unpkg.com/three@0.165.0/examples/jsm/loaders/KTX2Loader.js";
+    import { GLTFExporter } from "https://unpkg.com/three@0.165.0/examples/jsm/exporters/GLTFExporter.js";
+    import { RGBELoader } from "https://unpkg.com/three@0.165.0/examples/jsm/loaders/RGBELoader.js";
+    import { MeshoptDecoder } from "https://unpkg.com/meshoptimizer@0.20.0/meshopt_decoder.module.js";
+
+    // ===== レンダラ・シーン・カメラ =====
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
+    const scene = new THREE.Scene();
+    const setBackground = (grad) => {
+      if (grad) {
+        const top = new THREE.Color(0x0f1016), bottom = new THREE.Color(0x1a1f2a);
+        const tex = new THREE.DataTexture(new Uint8Array([
+          top.r*255, top.g*255, top.b*255, 255,
+          bottom.r*255, bottom.g*255, bottom.b*255, 255
+        ]), 1, 2, THREE.RGBAFormat);
+        tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true;
+        scene.background = tex;
+      } else {
+        scene.background = new THREE.Color(0x0f0f0f);
+      }
+    };
+    setBackground(true);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.01, 6000);
+    camera.position.set(0.8, 1.0, 2.0);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.enablePan = true; controls.enableZoom = true; controls.target.set(0, 0.9, 0);
+
+    // ライティング
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.7);
+    const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(3, 5, 4);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-4, 3, 2);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.8); rim.position.set(-2, 4, -5);
+    scene.add(hemi, key, fill, rim);
+    function applyLightPreset(name, intensity=1.2) {
+      hemi.intensity = 0.7 * intensity;
+      if (name === 'threePoint') {
+        key.intensity = 1.2 * intensity; fill.intensity = 0.6 * intensity; rim.intensity = 0.8 * intensity;
+        key.position.set(3,5,4); rim.position.set(-2,4,-5);
+      } else if (name === 'rim') {
+        key.intensity = 0.6 * intensity; fill.intensity = 0.4 * intensity; rim.intensity = 1.8 * intensity;
+        key.position.set(2,6,-3); rim.position.set(-4,10,6);
+      } else if (name === 'dramatic') {
+        key.intensity = 2.0 * intensity; fill.intensity = 0.2 * intensity; rim.intensity = 0.6 * intensity;
+        key.position.set(2,8,-3); rim.position.set(-4,10,6);
+      }
+    }
+    applyLightPreset('threePoint', 1.2);
+
+    // PMREM & HDRI
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    const hdrFile = document.getElementById('hdrFile');
+    const envInt = document.getElementById('envInt');
+    const hdrAsBgChk = document.getElementById('hdrAsBg');
+    function applyEnvIntensity(value) {
+      const v = Number(value);
+      scene.traverse((n) => {
+        if (n.isMesh && n.material && 'envMapIntensity' in n.material) {
+          n.material.envMapIntensity = v;
+          n.material.needsUpdate = true;
+        }
+      });
+    }
+    hdrFile.addEventListener('change', (ev) => {
+      const f = ev.target.files?.[0]; if (!f) return;
+      const url = URL.createObjectURL(f);
+      new RGBELoader().load(url, (tex) => {
+        const env = pmrem.fromEquirectangular(tex).texture;
+        scene.environment = env;
+        if (hdrAsBgChk.checked) scene.background = env; else setBackground(document.getElementById('bgGrad').checked);
+        tex.dispose();
+        URL.revokeObjectURL(url);
+        applyEnvIntensity(envInt.value);
+      }, undefined, (err) => { alert('HDRI読み込み失敗'); URL.revokeObjectURL(url); });
+    });
+    envInt.addEventListener('input', () => applyEnvIntensity(envInt.value));
+    hdrAsBgChk.addEventListener('change', () => {
+      if (scene.environment && hdrAsBgChk.checked) scene.background = scene.environment;
+      else setBackground(document.getElementById('bgGrad').checked);
+    });
+
+    // ルート
+    const contentRoot = new THREE.Group(); // キャラ
+    const bgRoot = new THREE.Group();      // 背景＆小物
+    scene.add(contentRoot, bgRoot);
+
+    // グリッド床
+    const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+    gridHelper.position.y = 0;
+    bgRoot.add(gridHelper);
+
+    // アウトライン
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    const outlinePass = new OutlinePass(new THREE.Vector2(window.innerWidth, window.innerHeight), scene, camera);
+    outlinePass.edgeStrength = 3.0; outlinePass.edgeGlow = 0.0; outlinePass.edgeThickness = 1.0; outlinePass.pulsePeriod = 0;
+    outlinePass.visibleEdgeColor.set('#ffffff'); outlinePass.hiddenEdgeColor.set('#000000');
+    composer.addPass(renderPass); composer.addPass(outlinePass);
+
+    const silhouetteMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+    // TransformControls
+    const tc = new TransformControls(camera, renderer.domElement);
+    tc.enabled = false;
+    tc.addEventListener('dragging-changed', (ev) => { controls.enabled = !ev.value; });
+    scene.add(tc);
+
+    // GLTFLoader（Draco/KTX2/Meshopt）
+    const draco = new DRACOLoader();
+    draco.setDecoderPath("https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/");
+    const ktx2 = new KTX2Loader();
+    ktx2.setTranscoderPath("https://unpkg.com/three@0.165.0/examples/jsm/libs/basis/");
+    ktx2.detectSupport(renderer);
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.setDRACOLoader(draco);
+    gltfLoader.setKTX2Loader(ktx2);
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+    // カメラフレーム
+    function frameObject(obj) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = box.getSize(new THREE.Vector3());
+      const c = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = camera.fov * (Math.PI / 180);
+      let dist = maxDim / (2 * Math.tan(fov / 2));
+      dist *= 1.3;
+      controls.target.copy(c);
+      camera.position.copy(c).add(new THREE.Vector3(dist*0.7, dist*0.5, dist*1.1));
+      camera.near = Math.max(dist / 1000, 0.01);
+      camera.far = dist * 1000;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    // ===== 構図ガイド（SVG格子） =====
+    const thirds = document.getElementById('thirds'), center = document.getElementById('center'), grid = document.getElementById('grid');
+    function makeGrid() {
+      grid.innerHTML = '';
+      const cols = 16, rows = 16;
+      for (let i=1;i<cols;i++) {
+        const x = (100/cols)*i + '%';
+        const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+        line.setAttribute('x1', x); line.setAttribute('y1', '0');
+        line.setAttribute('x2', x); line.setAttribute('y2', '100%');
+        grid.appendChild(line);
+      }
+      for (let j=1;j<rows;j++) {
+        const y = (100/rows)*j + '%';
+        const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+        line.setAttribute('x1', '0'); line.setAttribute('y1', y);
+        line.setAttribute('x2', '100%'); line.setAttribute('y2', y);
+        grid.appendChild(line);
+      }
+    }
+    makeGrid();
+
+    // 視点＆FOV
+    document.querySelectorAll('button[data-view]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const v = btn.getAttribute('data-view');
+        const t = controls.target.clone();
+        const dist = camera.position.clone().sub(t).length();
+        if (v === 'front') camera.position.set(t.x, t.y, t.z + dist);
+        if (v === 'back')  camera.position.set(t.x, t.y, t.z - dist);
+        if (v === 'side')  camera.position.set(t.x + dist, t.y, t.z);
+        if (v === 'top')   camera.position.set(t.x, t.y + dist, t.z);
+        if (v === 'low')   camera.position.set(t.x, t.y - dist*0.6, t.z + dist*0.8);
+        camera.lookAt(t); controls.update();
+      });
+    });
+    const fovRange = document.getElementById('fov');
+    const fovVal = document.getElementById('fovv');
+    fovRange.addEventListener('input', () => { camera.fov = Number(fovRange.value); camera.updateProjectionMatrix(); fovVal.textContent = fovRange.value; });
+
+    // ライトUI
+    const lightPreset = document.getElementById('lightPreset');
+    const lightIntensity = document.getElementById('lightIntensity');
+    const applyLights = () => applyLightPreset(lightPreset.value, Number(lightIntensity.value));
+    lightPreset.addEventListener('change', applyLights);
+    lightIntensity.addEventListener('input', applyLights);
+
+    // 表示トグル
+    const outlineChk = document.getElementById('outline');
+    outlineChk.addEventListener('change', () => { outlinePass.edgeStrength = outlineChk.checked ? 3.0 : 0.0; });
+    const bgGradChk = document.getElementById('bgGrad');
+    bgGradChk.addEventListener('change', () => setBackground(bgGradChk.checked));
+
+    // ===== 選択管理（背景編集） =====
+    let selected = null;
+    const selectedSet = new Set();
+    const multiSelChk = document.getElementById('multiSel');
+    const objectList = document.getElementById('objectList');
+
+    function refreshObjectList() {
+      const items = [];
+      bgRoot.traverse(n => {
+        if (n.isMesh && n !== gridHelper) items.push(n);
+        if (n.isGroup && n !== bgRoot) items.push(n);
+      });
+      objectList.innerHTML = '<option>(未選択)</option>';
+      items.forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = m.uuid;
+        opt.textContent = m.name || (m.isGroup ? `Group${i}` : `Mesh${i}`);
+        objectList.appendChild(opt);
+      });
+    }
+    function updateOutlineSelection() {
+      outlinePass.selectedObjects = [contentRoot, ...Array.from(selectedSet)];
+      if (selected && !selectedSet.has(selected)) outlinePass.selectedObjects.push(selected);
+    }
+    function selectObject(obj) {
+      selected = obj;
+      if (!multiSelChk.checked) {
+        selectedSet.clear();
+        if (obj) selectedSet.add(obj);
+      } else {
+        if (obj) {
+          if (selectedSet.has(obj)) selectedSet.delete(obj);
+          else selectedSet.add(obj);
+        }
+      }
+      tc.detach();
+      if (selected) { tc.attach(selected); tc.enabled = document.getElementById('bgEdit').checked; }
+      updateOutlineSelection();
+      // リスト同期
+      [...objectList.options].forEach(o => { if (o.value === (obj?.uuid||'')) objectList.value = o.value; });
+    }
+
+    // タップ選択
+    const ray = new THREE.Raycaster();
+    function pickAtClient(x, y) {
+      const rect = canvas.getBoundingClientRect();
+      const nx = ((x - rect.left) / rect.width) * 2 - 1;
+      const ny = -((y - rect.top) / rect.height) * 2 + 1;
+      ray.setFromCamera({x:nx, y:ny}, camera);
+      const intersects = ray.intersectObjects(bgRoot.children, true).filter(i => (i.object.isMesh || i.object.isGroup) && i.object !== gridHelper);
+      if (intersects.length) selectObject(intersects[0].object);
+    }
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!document.getElementById('bgEdit').checked) return;
+      pickAtClient(e.clientX, e.clientY);
+    });
+
+    objectList.addEventListener('change', () => {
+      const uuid = objectList.value;
+      if (!uuid || uuid==='(未選択)') { selected = null; selectedSet.clear(); updateOutlineSelection(); tc.detach(); return; }
+      let obj = null;
+      bgRoot.traverse(n => { if (n.uuid===uuid) obj = n; });
+      selectObject(obj);
+    });
+
+    // TransformControlsモード・スナップ
+    const tcModeSel = document.getElementById('tcMode');
+    const snapPos = document.getElementById('snapPos');
+    const snapRot = document.getElementById('snapRot');
+    tcModeSel.addEventListener('change', () => tc.setMode(tcModeSel.value));
+    snapPos.addEventListener('input', () => tc.setTranslationSnap(Number(snapPos.value)||null));
+    snapRot.addEventListener('input', () => tc.setRotationSnap(THREE.MathUtils.degToRad(Number(snapRot.value)||0)));
+
+    // 床合わせ
+    document.getElementById('dropToFloor').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => {
+        const box = new THREE.Box3().setFromObject(obj);
+        const minY = box.min.y;
+        obj.position.y -= minY; // 下端を y=0 に
+      });
+    });
+
+    // グループ化＆解除
+    document.getElementById('groupMake').addEventListener('click', () => {
+      if (selectedSet.size < 2) return alert('2つ以上選択してください');
+      const group = new THREE.Group();
+      group.name = 'Group';
+      bgRoot.add(group);
+      [...selectedSet].forEach(obj => { group.add(obj); });
+      selectedSet.clear(); selectedSet.add(group);
+      selectObject(group);
+      refreshObjectList();
+    });
+    document.getElementById('groupBreak').addEventListener('click', () => {
+      [...selectedSet].forEach(g => {
+        if (g.isGroup) {
+          const children = [...g.children];
+          children.forEach(ch => { bgRoot.add(ch); });
+          g.parent.remove(g);
+        }
+      });
+      selectedSet.clear(); selected = null; tc.detach();
+      refreshObjectList(); updateOutlineSelection();
+    });
+
+    // 複製／削除／ミラー／表示／ロック
+    document.getElementById('duplicate').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => {
+        const clone = obj.clone(true);
+        clone.traverse(n => { if (n.isMesh && n.material) n.material = n.material.clone(); });
+        clone.position.add(new THREE.Vector3(0.5,0,0));
+        bgRoot.add(clone);
+      });
+      refreshObjectList();
+    });
+    document.getElementById('delete').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => { obj.parent.remove(obj); });
+      selectedSet.clear(); selected = null; tc.detach();
+      refreshObjectList(); updateOutlineSelection();
+    });
+    document.getElementById('mirrorX').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => {
+        const clone = obj.clone(true);
+        clone.traverse(n => { if (n.isMesh && n.material) n.material = n.material.clone(); });
+        clone.position.set(-obj.position.x, obj.position.y, obj.position.z);
+        clone.rotation.y = -obj.rotation.y; clone.rotation.z = -obj.rotation.z;
+        bgRoot.add(clone);
+      });
+      refreshObjectList();
+    });
+    document.getElementById('toggleVis').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => { obj.visible = !obj.visible; });
+      updateOutlineSelection();
+    });
+    document.getElementById('toggleLock').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => { obj.userData.locked = !obj.userData.locked; });
+      tc.enabled = [...selectedSet].every(o => !o.userData.locked) && document.getElementById('bgEdit').checked;
+    });
+
+    // 背景プリセット
+    const bgPresetSel = document.getElementById('bgPreset');
+    const bgScale = document.getElementById('bgScale');
+    function buildStudio() {
+      // クリア
+      bgRoot.children.filter(ch => ch !== gridHelper && ch !== tc).forEach(ch => {});
+      // 単純な床・壁セット
+      const matWall = new THREE.MeshStandardMaterial({ color: 0x20252f, roughness: 0.9, metalness: 0.0 });
+      const matFloor = new THREE.MeshStandardMaterial({ color: 0x1a1f28, roughness: 0.8, metalness: 0.0 });
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(10,10), matFloor);
+      floor.rotation.x = -Math.PI/2; floor.position.y = 0;
+      const back = new THREE.Mesh(new THREE.PlaneGeometry(10,5), matWall);
+      back.position.z = -3; back.position.y = 2.5;
+      const side = new THREE.Mesh(new THREE.PlaneGeometry(10,5), matWall);
+      side.rotation.y = Math.PI/2; side.position.x = -3; side.position.y = 2.5;
+      bgRoot.add(floor, back, side);
+    }
+    function buildStage() {
+      const matStage = new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 0.6 });
+      const matAccent = new THREE.MeshStandardMaterial({ color: 0x7aa0ff, emissive: 0x223355, emissiveIntensity: 0.6, roughness: 0.5 });
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 0.3, 32), matStage);
+      base.position.y = 0.15;
+      const step = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.0, 0.2, 32), matStage);
+      step.position.y = 0.1;
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.05, 16, 64), matAccent);
+      arc.position.y = 2.0;
+      bgRoot.add(step, base, arc);
+    }
+    function buildSkybox() {
+      const matSky = new THREE.MeshBasicMaterial({ color: 0x182030, side: THREE.BackSide });
+      const box = new THREE.Mesh(new THREE.BoxGeometry(30, 20, 30), matSky);
+      bgRoot.add(box);
+    }
+    function applyBGPreset(name) {
+      // Remove everything except gridHelper and transformcontrols attachment (no direct child) — pragmatic clear
+      const toRemove = [];
+      bgRoot.children.forEach(ch => { if (ch !== gridHelper && ch !== tc) toRemove.push(ch); });
+      toRemove.forEach(ch => bgRoot.remove(ch));
+      if (name === 'none') { /* nothing */ }
+      else if (name === 'studio') buildStudio();
+      else if (name === 'stage') buildStage();
+      else if (name === 'skybox') buildSkybox();
+      bgRoot.scale.setScalar(Number(bgScale.value));
+      refreshObjectList();
+    }
+    bgPresetSel.addEventListener('change', () => applyBGPreset(bgPresetSel.value));
+    bgScale.addEventListener('input', () => bgRoot.scale.setScalar(Number(bgScale.value)));
+    document.getElementById('bgReset').addEventListener('click', () => { applyBGPreset('none'); bgPresetSel.value = 'none'; bgScale.value = 1; });
+
+    // ライブラリ（簡易造形）
+    function addSpot() {
+      const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,2,16), new THREE.MeshStandardMaterial({ color:0x2b2f3a, roughness:0.6 }));
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.15,0.25,16), new THREE.MeshStandardMaterial({ color:0x444a55, roughness:0.5, metalness:0.2 }));
+      head.position.y = 1.1; head.rotation.x = -Math.PI/6;
+      const grp = new THREE.Group(); grp.add(stand, head); grp.name = 'Spot';
+      const spot = new THREE.SpotLight(0xffffff, 2.0, 10, Math.PI/8, 0.3);
+      spot.position.set(0,1.2,0); spot.target.position.set(0,0, -2);
+      grp.add(spot, spot.target);
+      grp.position.set(0,0,0); bgRoot.add(grp); return grp;
+    }
+    function addSpeaker() {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.7,0.3), new THREE.MeshStandardMaterial({ color:0x1a1f28, roughness:0.8 }));
+      const grill = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.02,32), new THREE.MeshStandardMaterial({ color:0x33393f, roughness:0.7 }));
+      grill.rotation.z = Math.PI/2; grill.position.set(0,0.1,0.16);
+      const grp = new THREE.Group(); grp.add(body, grill); grp.name='Speaker';
+      bgRoot.add(grp); return grp;
+    }
+    function addTruss() {
+      const mat = new THREE.MeshStandardMaterial({ color:0x888c96, roughness:0.4, metalness:0.5 });
+      const grp = new THREE.Group(); grp.name='Truss';
+      for (let i=0;i<5;i++) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(2,0.05,0.05), mat);
+        bar.position.y = 1 + i*0.2; grp.add(bar);
+      }
+      bgRoot.add(grp); return grp;
+    }
+    function addBanner() {
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(2.5,1), new THREE.MeshStandardMaterial({ color:0x7aa0ff, roughness:0.7 }));
+      plane.position.y = 2;
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.6,0.05,0.05), new THREE.MeshStandardMaterial({ color:0x888c96, roughness:0.5, metalness:0.4 }));
+      frame.position.y = 2.55;
+      const grp = new THREE.Group(); grp.add(plane, frame); grp.name='Banner';
+      bgRoot.add(grp); return grp;
+    }
+    function addDeskSet() {
+      const table = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.05,0.7), new THREE.MeshStandardMaterial({ color:0x8c6f54, roughness:0.8 }));
+      table.position.y = 0.75;
+      const legs = new THREE.Group();
+      for (let i=0;i<4;i++){
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.75,12), new THREE.MeshStandardMaterial({ color:0x3a3a3a, roughness:0.7 }));
+        leg.position.set( (i<2? -0.55:0.55), 0.375, (i%2===0? -0.3:0.3) );
+        legs.add(leg);
+      }
+      const chair = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.05,0.4), new THREE.MeshStandardMaterial({ color:0x5c5c5c, roughness:0.8 }));
+      chair.position.set(-0.4, 0.4, 0);
+      const grp = new THREE.Group(); grp.add(table, legs, chair); grp.name='DeskSet';
+      bgRoot.add(grp); return grp;
+    }
+    function addLocker() {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.8,0.4), new THREE.MeshStandardMaterial({ color:0x2b2f3a, roughness:0.8 }));
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.02,0.1,0.02), new THREE.MeshStandardMaterial({ color:0xd0d0d0, metalness:0.7, roughness:0.3 }));
+      handle.position.set(0.35,0.3,0.21);
+      const grp = new THREE.Group(); grp.add(box, handle); grp.name='Locker';
+      grp.position.y = 0.9;
+      bgRoot.add(grp); return grp;
+    }
+    const libMap = { spot:addSpot, speaker:addSpeaker, truss:addTruss, banner:addBanner, deskset:addDeskSet, locker:addLocker };
+    document.querySelectorAll('button[data-lib]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-lib');
+        const o = libMap[key](); refreshObjectList(); selectObject(o);
+      });
+    });
+
+    // 背景GLB読み込み
+    async function loadBGGLB(file) {
+      const url = URL.createObjectURL(file);
+      try {
+        const gltf = await gltfLoader.loadAsync(url);
+        const bg = gltf.scene;
+        bgRoot.add(bg);
+        refreshObjectList();
+      } catch (e) { alert('背景読み込み失敗: ' + e.message); }
+      finally { URL.revokeObjectURL(url); }
+    }
+    document.getElementById('bgFile').addEventListener('change', (ev) => {
+      const f = ev.target.files?.[0]; if (f) loadBGGLB(f);
+    });
+
+    // ===== インスタンス化 =====
+    function makeGeometryFor(type){
+      if (type==='chair') return new THREE.BoxGeometry(0.4,0.05,0.4); // 座面（簡易）
+      if (type==='column') return new THREE.CylinderGeometry(0.1,0.1,2,16);
+      if (type==='lamp') return new THREE.SphereGeometry(0.15, 16, 12);
+      return new THREE.BoxGeometry(0.5,0.5,0.5);
+    }
+    function makeMaterialFor(type){
+      if (type==='lamp') return new THREE.MeshStandardMaterial({ color:0xffe38a, emissive:0xffd050, emissiveIntensity:0.8, roughness:0.5 });
+      if (type==='column') return new THREE.MeshStandardMaterial({ color:0x888c96, roughness:0.4, metalness:0.4 });
+      return new THREE.MeshStandardMaterial({ color:0x7aa0ff, roughness:0.7, metalness:0.0 });
+    }
+    const instSets = []; // { mesh: InstancedMesh, rows, cols, spacingX, spacingZ, jitter }
+    function addInstanceSet(type, rows, cols, sx, sz, jitter){
+      const geo = makeGeometryFor(type), mat = makeMaterialFor(type);
+      const count = rows*cols;
+      const inst = new THREE.InstancedMesh(geo, mat, count);
+      inst.name = `Inst_${type}`;
+      const dummy = new THREE.Object3D();
+      let idx = 0;
+      for (let r=0;r<rows;r++){
+        for (let c=0;c<cols;c++){
+          const x = (c - (cols-1)/2)*sx + (Math.random()-0.5)*jitter;
+          const z = (r - (rows-1)/2)*sz + (Math.random()-0.5)*jitter;
+          dummy.position.set(x, 0.5, z);
+          dummy.rotation.set(0, (Math.random()-0.5)*0.2, 0);
+          dummy.scale.set(1,1,1);
+          dummy.updateMatrix();
+          inst.setMatrixAt(idx++, dummy.matrix);
+        }
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      bgRoot.add(inst);
+      instSets.push({ mesh:inst, rows, cols, spacingX:sx, spacingZ:sz, jitter });
+      refreshObjectList();
+      selectObject(inst);
+    }
+    document.getElementById('instAdd').addEventListener('click', () => {
+      const type = document.getElementById('instType').value;
+      const rows = Number(document.getElementById('instRows').value);
+      const cols = Number(document.getElementById('instCols').value);
+      const sx = Number(document.getElementById('instSpacingX').value);
+      const sz = Number(document.getElementById('instSpacingZ').value);
+      const jit = Number(document.getElementById('instJitter').value);
+      addInstanceSet(type, rows, cols, sx, sz, jit);
+    });
+    document.getElementById('instBake').addEventListener('click', () => {
+      if (!selected || !(selected instanceof THREE.InstancedMesh)) return alert('インスタンスを選択してください');
+      const inst = selected;
+      const count = inst.count;
+      const mat = inst.material;
+      const geo = inst.geometry;
+      const mtx = new THREE.Matrix4();
+      for (let i=0;i<count;i++){
+        inst.getMatrixAt(i, mtx);
+        const mesh = new THREE.Mesh(geo.clone(), mat.clone());
+        mesh.applyMatrix4(mtx);
+        bgRoot.add(mesh);
+      }
+      inst.parent.remove(inst);
+      refreshObjectList();
+    });
+
+    // 素材適用
+    function hexToNum(hex) { return parseInt(hex.replace('#',''), 16); }
+    document.getElementById('applyMat').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => {
+        obj.traverse?.((n) => {
+          if (n.isMesh && n.material) {
+            const preset = document.getElementById('matPreset').value;
+            const col = hexToNum(document.getElementById('matColor').value);
+            const rough = Number(document.getElementById('matRough').value);
+            const metal = Number(document.getElementById('matMetal').value);
+            const emiI = Number(document.getElementById('matEmiInt').value);
+            n.material.color.setHex(col);
+            n.material.roughness = rough;
+            n.material.metalness = metal;
+            n.material.emissive = new THREE.Color(col);
+            n.material.emissiveIntensity = (preset==='neon') ? Math.max(0.2, emiI) : emiI;
+            n.material.envMapIntensity = Number(envInt.value);
+            n.material.needsUpdate = true;
+          }
+        });
+      });
+    });
+
+    // テクスチャ貼り＆タイル
+    const texFile = document.getElementById('texFile');
+    const tileU = document.getElementById('tileU');
+    const tileV = document.getElementById('tileV');
+    function applyTiling(material) {
+      const t = material.map; if (!t) return;
+      t.repeat.set(Number(tileU.value), Number(tileV.value));
+      t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping;
+      t.needsUpdate = true;
+    }
+    texFile.addEventListener('change', async (ev) => {
+      const f = ev.target.files?.[0]; if (!f || selectedSet.size===0) return;
+      const url = URL.createObjectURL(f);
+      const loader = new THREE.TextureLoader();
+      loader.load(url, (tex) => {
+        [...selectedSet].forEach(obj => {
+          obj.traverse?.((n) => {
+            if (n.isMesh && n.material) {
+              n.material.map = tex;
+              n.material.map.colorSpace = THREE.SRGBColorSpace;
+              applyTiling(n.material);
+              n.material.needsUpdate = true;
+            }
+          });
+        });
+        URL.revokeObjectURL(url);
+      }, undefined, (e) => { alert('テクスチャ読み込み失敗'); URL.revokeObjectURL(url); });
+    });
+    tileU.addEventListener('input', () => { [...selectedSet].forEach(o=>o.traverse?.(n=>n.isMesh && applyTiling(n.material))); });
+    tileV.addEventListener('input', () => { [...selectedSet].forEach(o=>o.traverse?.(n=>n.isMesh && applyTiling(n.material))); });
+    document.getElementById('clearTex').addEventListener('click', () => {
+      [...selectedSet].forEach(obj => {
+        obj.traverse?.((n) => {
+          if (n.isMesh && n.material) { n.material.map = null; n.material.needsUpdate = true; }
+        });
+      });
+    });
+
+    // 背景GLBエクスポート
+    function saveBlob(blob, filename) {
+      const a = document.createElement('a');
+      document.body.appendChild(a);
+      const url = URL.createObjectURL(blob);
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url); document.body.removeChild(a);
+    }
+    document.getElementById('exportGLB').addEventListener('click', () => {
+      const exporter = new GLTFExporter();
+      exporter.parse(bgRoot, (res) => {
+        const blob = new Blob([res], { type: 'model/gltf-binary' });
+        saveBlob(blob, 'background.glb');
+      }, { binary: true });
+    });
+
+    // ===== 骨＆ポーズ＆手指＆体型 =====
+    let charRoot = null;
+    let boneList = [];   // { bone, name(lowercase) }
+    const initRot = new Map();  // uuid -> Euler
+    const initPos = new Map();  // uuid -> Vector3
+    const initScale = new Map(); // uuid -> Vector3
+
+    function collectBodyBones(root) {
+      boneList = [];
+      root.traverse((n) => {
+        if (n.isSkinnedMesh && n.skeleton) {
+          for (const b of n.skeleton.bones) {
+            boneList.push({ bone: b, name: (b.name || '').toLowerCase() });
+          }
+        }
+      });
+    }
+    function storeInitialRotations(root) { initRot.clear(); root.traverse((n) => { if (n.isBone) initRot.set(n.uuid, n.rotation.clone()); }); }
+    function storeInitialPosScale(root) {
+      initPos.clear(); initScale.clear();
+      root.traverse((n) => { if (n.isBone) { initPos.set(n.uuid, n.position.clone()); initScale.set(n.uuid, n.scale.clone()); } });
+    }
+    function resetToInitial(bone) {
+      if (initRot.has(bone.uuid)) { const r = initRot.get(bone.uuid); bone.rotation.set(r.x, r.y, r.z); }
+      if (initPos.has(bone.uuid)) { const p = initPos.get(bone.uuid); bone.position.set(p.x, p.y, p.z); }
+      if (initScale.has(bone.uuid)) { const s = initScale.get(bone.uuid); bone.scale.set(s.x, s.y, s.z); }
+    }
+
+    // ボーン命名プロファイル
+    let activeBoneProfile = 'auto';
+    let customBoneProfile = {};
+    const boneProfiles = {
+      mixamo: {
+        hips:[/hips/i,/pelvis/i,/mixamorig.*hips/i], spine:[/spine/i,/mixamorig.*spine/i], chest:[/chest/i,/upperchest/i,/spine2/i], neck:[/neck/i], head:[/head/i],
+        clavicle:[/clavicle/i,/shoulder/i], upperarm:[/upperarm/i], lowerarm:[/lowerarm|forearm/i], hand:[/hand|wrist/i], thigh:[/thigh|upperleg/i], shin:[/shin|lowerleg|calf/i], foot:[/foot/i],
+        thumb:[/thumb/i], index:[/index|pointer/i], middle:[/middle/i], ring:[/ring/i], pinky:[/pinky|little/i]
+      },
+      vrm: {
+        hips:[/j_bip_.*hips/i,/pelvis/i], spine:[/j_bip_.*spine/i], chest:[/j_bip_.*chest|upperchest/i], neck:[/j_bip_.*neck/i], head:[/j_bip_.*head/i],
+        clavicle:[/j_bip_.*shoulder|clavicle/i], upperarm:[/j_bip_.*upperarm/i], lowerarm:[/j_bip_.*lowerarm|forearm/i], hand:[/j_bip_.*hand|wrist/i],
+        thigh:[/j_bip_.*upperleg|thigh/i], shin:[/j_bip_.*lowerleg|shin|calf/i], foot:[/j_bip_.*foot/i],
+        thumb:[/thumb/i], index:[/index|pointer/i], middle:[/middle/i], ring:[/ring/i], pinky:[/pinky|little/i]
+      },
+      mmd: {
+        hips:[/下半身|センター|腰/i], spine:[/上半身|胴|背|spine/i], chest:[/上半身2|胸|chest/i], neck:[/首|neck/i], head:[/頭|head/i],
+        clavicle:[/肩|clavicle|shoulder/i], upperarm:[/腕|upperarm/i], lowerarm:[/ひじ|肘|lowerarm|forearm/i], hand:[/手首|手|wrist|hand/i],
+        thigh:[/足|太もも|大腿|thigh|upperleg/i], shin:[/ひざ|膝|すね|下腿|shin|lowerleg|calf/i], foot:[/足首|foot/i],
+        thumb:[/親指/i], index:[/人差/i], middle:[/中指/i], ring:[/薬指/i], pinky:[/小指/i]
+      }
+    };
+    const sidePatterns = {
+      auto: { L: [/(\.l|_l|-l)\b/i, /\bleft\b/i], R: [/(\.r|_r|-r)\b/i, /\bright\b/i] },
+      mixamo: { L: [/left/i, /\.l\b/i], R: [/right/i, /\.r\b/i] },
+      vrm: { L: [/j_bip_l_/i, /\bl\b/i, /\bleft\b/i], R: [/j_bip_r_/i, /\br\b/i, /\bright\b/i] },
+      mmd: { L: [/左/i], R: [/右/i] }
+    };
+    function matchAny(name, regexList) { const n = (name || '').toLowerCase(); return regexList?.some(r => r.test(n)); }
+    function findBonesRole(role, side='') {
+      const prof = activeBoneProfile === 'custom' ? customBoneProfile : boneProfiles[activeBoneProfile];
+      if (!prof || !boneList?.length) return [];
+      const rolePatterns = prof[role] || [];
+      const sideRegex = side ? sidePatterns[activeBoneProfile]?.[side] : null;
+      return boneList.filter(b => matchAny(b.name, rolePatterns) && (!sideRegex || matchAny(b.name, sideRegex))).map(b => b.bone);
+    }
+
+    // 指チェーン並び（基部→中間→末端）
+    function sortFingerChain(chain) {
+      const pri = ['metacarpal','proximal','first','1','middle','intermediate','second','2','distal','third','3'];
+      const score = (bone)=>{ const n=(bone.name||'').toLowerCase(); for(let i=0;i<pri.length;i++) if(n.includes(pri[i])) return i; return pri.length + n.length; };
+      return chain.sort((a,b)=>score(a)-score(b));
+    }
+
+    // 指状態
+    const fingerState = { L:{thumb:{curl:0,spread:0},index:{curl:0,spread:0},middle:{curl:0,spread:0},ring:{curl:0,spread:0},pinky:{curl:0,spread:0}}, R:{thumb:{curl:0,spread:0},index:{curl:0,spread:0},middle:{curl:0,spread:0},ring:{curl:0,spread:0},pinky:{curl:0,spread:0}} };
+    const curlWeights=[1.0,0.8,0.6];
+    function axisForFinger(f,a){ if(a==='x'||a==='y'||a==='z') return a; return f==='thumb'?'z':'y'; }
+    function updateFingerPose(side,finger){
+      const map = {thumb:['thumb'],index:['index','pointer'],middle:['middle'],ring:['ring'],pinky:['pinky','little']};
+      let chain = findBonesRole(finger, side); if(!chain.length) return;
+      chain = sortFingerChain(chain);
+      chain.forEach(b=>resetToInitial(b));
+      const curlDeg = fingerState[side][finger].curl; const spreadDeg = fingerState[side][finger].spread; const axis = axisForFinger(finger, document.getElementById('spreadAxis').value);
+      chain.forEach((b,i)=>{ const w=curlWeights[Math.min(i,curlWeights.length-1)]; b.rotation.x += THREE.MathUtils.degToRad(curlDeg*w); });
+      const base=chain[0], rad=THREE.MathUtils.degToRad(spreadDeg);
+      if(axis==='x') base.rotation.x += rad; else if(axis==='y') base.rotation.y += rad; else base.rotation.z += rad;
+    }
+    function updateAllFingers(side){ ['thumb','index','middle','ring','pinky'].forEach(f=>updateFingerPose(side,f)); }
+
+    // 手首
+    function setWristRotation(side,p,y,r){ const hand=findBonesRole('hand', side)[0]; if(hand){ resetToInitial(hand); hand.rotation.x += THREE.MathUtils.degToRad(p); hand.rotation.y += THREE.MathUtils.degToRad(y); hand.rotation.z += THREE.MathUtils.degToRad(r); } }
+
+    // ポーズ
+    function applyPose(name){
+      const spine=findBonesRole('spine','');
+      const neck=findBonesRole('neck','');
+      const uaL=findBonesRole('upperarm','L'), uaR=findBonesRole('upperarm','R');
+      const laL=findBonesRole('lowerarm','L'), laR=findBonesRole('lowerarm','R');
+      const handL=findBonesRole('hand','L'), handR=findBonesRole('hand','R');
+      const thL=findBonesRole('thigh','L'), thR=findBonesRole('thigh','R');
+      const shL=findBonesRole('shin','L'), shR=findBonesRole('shin','R');
+      const footL=findBonesRole('foot','L'), footR=findBonesRole('foot','R');
+      boneList.forEach(b=>resetToInitial(b.bone));
+      const d = (deg)=>THREE.MathUtils.degToRad(deg);
+      if(name==='tPose'){ uaL.forEach(b=>b.rotation.z+=d(90)); uaR.forEach(b=>b.rotation.z+=d(-90)); }
+      else if(name==='reset'){ uaL.forEach(b=>b.rotation.z+=d(20)); uaR.forEach(b=>b.rotation.z+=d(-20)); thL.forEach(b=>b.rotation.y+=d(5)); thR.forEach(b=>b.rotation.y+=d(-5)); }
+      else if(name==='idle'){ spine.forEach(b=>b.rotation.x+=d(-2)); neck.forEach(b=>b.rotation.x+=d(2)); uaL.forEach(b=>b.rotation.z+=d(25)); uaR.forEach(b=>b.rotation.z+=d(-25)); }
+      else if(name==='run'){ spine.forEach(b=>b.rotation.x+=d(-10)); uaL.forEach(b=>{b.rotation.x+=d(-30); b.rotation.z+=d(10)}); uaR.forEach(b=>{b.rotation.x+=d(30); b.rotation.z+=d(-10)}); laL.forEach(b=>b.rotation.x+=d(-20)); laR.forEach(b=>b.rotation.x+=d(20)); thL.forEach(b=>b.rotation.x+=d(20)); thR.forEach(b=>b.rotation.x+=d(-30)); shL.forEach(b=>b.rotation.x+=d(-10)); shR.forEach(b=>b.rotation.x+=d(15)); }
+      else if(name==='jump'){ uaL.forEach(b=>{b.rotation.x+=d(-20); b.rotation.z+=d(40)}); uaR.forEach(b=>{b.rotation.x+=d(-20); b.rotation.z+=d(-40)}); thL.forEach(b=>b.rotation.x+=d(30)); thR.forEach(b=>b.rotation.x+=d(30)); shL.forEach(b=>b.rotation.x+=d(-20)); shR.forEach(b=>b.rotation.x+=d(-20)); footL.forEach(b=>b.rotation.x+=d(10)); footR.forEach(b=>b.rotation.x+=d(10)); }
+      else if(name==='idol'){ spine.forEach(b=>b.rotation.y+=d(10)); uaL.forEach(b=>{b.rotation.z+=d(60); b.rotation.x+=d(-10)}); laL.forEach(b=>{b.rotation.z+=d(30); b.rotation.x+=d(20)}); handL.forEach(b=>b.rotation.x+=d(20)); uaR.forEach(b=>{b.rotation.z+=d(-30); b.rotation.x+=d(-15)}); laR.forEach(b=>{b.rotation.z+=d(-60); b.rotation.x+=d(15)}); thL.forEach(b=>b.rotation.x+=d(10)); thR.forEach(b=>b.rotation.x+=d(-5)); }
+      updateAllFingers('L'); updateAllFingers('R');
+    }
+
+    // 体型パラメータ
+    const params = { heightScale:1.00, headScale:1.00, shoulderWidth:1.00, hipWidth:1.00, torsoLen:1.00, legLen:1.00, armLen:1.00, bodyThickness:1.00 };
+    function mulPosFromInit(bone, f){ if (!bone || !initPos.has(bone.uuid)) return; const p0=initPos.get(bone.uuid); bone.position.set(p0.x*f.x, p0.y*f.y, p0.z*f.z); }
+    function mulScaleFromInit(bone, f){ if (!bone || !initScale.has(bone.uuid)) return; const s0=initScale.get(bone.uuid); bone.scale.set(s0.x*f.x, s0.y*f.y, s0.z*f.z); }
+    function pickMap(){
+      const pick = (arr)=>arr && arr.length ? arr[0] : null;
+      return {
+        hips: pick(findBonesRole('hips','')), spine: pick(findBonesRole('spine','')), chest: pick(findBonesRole('chest','')), neck: pick(findBonesRole('neck','')), head: pick(findBonesRole('head','')),
+        clavL: pick(findBonesRole('clavicle','L')), clavR: pick(findBonesRole('clavicle','R')),
+        uArmL: pick(findBonesRole('upperarm','L')), uArmR: pick(findBonesRole('upperarm','R')),
+        lArmL: pick(findBonesRole('lowerarm','L')), lArmR: pick(findBonesRole('lowerarm','R')),
+        handL: pick(findBonesRole('hand','L')), handR: pick(findBonesRole('hand','R')),
+        thighL: pick(findBonesRole('thigh','L')), thighR: pick(findBonesRole('thigh','R')),
+        shinL: pick(findBonesRole('shin','L')), shinR: pick(findBonesRole('shin','R')),
+        footL: pick(findBonesRole('foot','L')), footR: pick(findBonesRole('foot','R'))
+      };
+    }
+    function applyBodyParams(){
+      if (!charRoot || boneList.length===0) return;
+      const M = pickMap();
+      // 全体身長
+      charRoot.scale.setScalar(params.heightScale);
+      // 頭サイズ
+      if (M.head) mulScaleFromInit(M.head, new THREE.Vector3(params.headScale, params.headScale, params.headScale));
+      // 肩幅
+      if (M.clavL && M.clavR) { mulPosFromInit(M.clavL, new THREE.Vector3(params.shoulderWidth,1,1)); mulPosFromInit(M.clavR, new THREE.Vector3(params.shoulderWidth,1,1)); }
+      if (M.chest) mulScaleFromInit(M.chest, new THREE.Vector3(params.shoulderWidth,1,1));
+      // 腰幅
+      if (M.hips) mulScaleFromInit(M.hips, new THREE.Vector3(params.hipWidth,1,params.hipWidth));
+      if (M.thighL) mulPosFromInit(M.thighL, new THREE.Vector3(params.hipWidth,1,1));
+      if (M.thighR) mulPosFromInit(M.thighR, new THREE.Vector3(params.hipWidth,1,1));
+      // 体幹長
+      if (M.chest) mulPosFromInit(M.chest, new THREE.Vector3(1, params.torsoLen, 1));
+      if (M.neck)  mulPosFromInit(M.neck,  new THREE.Vector3(1, params.torsoLen, 1));
+      // 脚長
+      if (M.shinL)  mulPosFromInit(M.shinL,  new THREE.Vector3(1, params.legLen, 1));
+      if (M.shinR)  mulPosFromInit(M.shinR,  new THREE.Vector3(1, params.legLen, 1));
+      if (M.footL)  mulPosFromInit(M.footL,  new THREE.Vector3(1, params.legLen, 1));
+      if (M.footR)  mulPosFromInit(M.footR,  new THREE.Vector3(1, params.legLen, 1));
+      // 腕長
+      if (M.lArmL)  mulPosFromInit(M.lArmL,  new THREE.Vector3(params.armLen, params.armLen, params.armLen));
+      if (M.lArmR)  mulPosFromInit(M.lArmR,  new THREE.Vector3(params.armLen, params.armLen, params.armLen));
+      if (M.handL)  mulPosFromInit(M.handL,  new THREE.Vector3(params.armLen, params.armLen, params.armLen));
+      if (M.handR)  mulPosFromInit(M.handR,  new THREE.Vector3(params.armLen, params.armLen, params.armLen));
+      // 厚み
+      if (M.chest) mulScaleFromInit(M.chest, new THREE.Vector3(params.bodyThickness,1,params.bodyThickness));
+      if (M.hips)  mulScaleFromInit(M.hips,  new THREE.Vector3(params.bodyThickness,1,params.bodyThickness));
+      // 推定頭身
+      const approx = (7 / params.headScale).toFixed(1);
+      document.getElementById('headsOut').textContent = `推定頭身: ${approx}`;
+    }
+    function setBodyPreset(name){
+      if (name==='neutral') { params.heightScale=1.00; params.headScale=1.00; params.shoulderWidth=1.00; params.hipWidth=1.00; params.torsoLen=1.00; params.legLen=1.00; params.armLen=1.00; params.bodyThickness=1.00; }
+      else if (name==='masc') { params.heightScale=1.02; params.headScale=0.97; params.shoulderWidth=1.15; params.hipWidth=0.95; params.torsoLen=1.04; params.legLen=1.00; params.armLen=1.02; params.bodyThickness=1.05; }
+      else if (name==='fem') { params.heightScale=1.00; params.headScale=1.03; params.shoulderWidth=0.95; params.hipWidth=1.10; params.torsoLen=0.98; params.legLen=1.05; params.armLen=0.98; params.bodyThickness=0.98; }
+      ['heightScale','headScale','shoulderWidth','hipWidth','torsoLen','legLen','armLen','bodyThickness'].forEach(k=>{ const el=document.getElementById(k); if(el) el.value=String(params[k]); });
+      applyBodyParams();
+    }
+    function resetBody(){ if(!charRoot) return; charRoot.traverse((n)=>{ if(n.isBone){ if(initPos.has(n.uuid)) n.position.copy(initPos.get(n.uuid)); if(initScale.has(n.uuid)) n.scale.copy(initScale.get(n.uuid)); } }); ['heightScale','headScale','shoulderWidth','hipWidth','torsoLen','legLen','armLen','bodyThickness'].forEach(k=>{ params[k]=1.00; const el=document.getElementById(k); if(el) el.value='1.00'; }); const approx=(7/params.headScale).toFixed(1); document.getElementById('headsOut').textContent=`推定頭身: ${approx}`; }
+
+    // イベント：ポーズ・手・指・体型
+    document.getElementById('applyPose').addEventListener('click', () => { const pose = document.getElementById('posePreset').value; applyPose(pose); });
+    const handSideSel=document.getElementById('handSide'); const wPitch=document.getElementById('wPitch'); const wYaw=document.getElementById('wYaw'); const wRoll=document.getElementById('wRoll');
+    function updateWrist(){ setWristRotation(handSideSel.value, Number(wPitch.value), Number(wYaw.value), Number(wRoll.value)); }
+    wPitch.addEventListener('input', updateWrist); wYaw.addEventListener('input', updateWrist); wRoll.addEventListener('input', updateWrist);
+    document.getElementById('handReset').addEventListener('click', () => { const hand=findBonesRole('hand', handSideSel.value)[0]; if(hand) resetToInitial(hand); wPitch.value='0'; wYaw.value='0'; wRoll.value='0'; });
+    const curls={ thumb:document.getElementById('thumbCurl'), index:document.getElementById('indexCurl'), middle:document.getElementById('middleCurl'), ring:document.getElementById('ringCurl'), pinky:document.getElementById('pinkyCurl') };
+    Object.keys(curls).forEach(f => curls[f].addEventListener('input', () => { fingerState[handSideSel.value][f].curl = Number(curls[f].value); updateFingerPose(handSideSel.value, f); }));
+    document.getElementById('fingersCurlReset').addEventListener('click', () => { ['thumb','index','middle','ring','pinky'].forEach(f => { fingerState[handSideSel.value][f].curl=0; curls[f].value='0'; updateFingerPose(handSideSel.value,f); }); });
+    const spreads={ thumb:document.getElementById('thumbSpread'), index:document.getElementById('indexSpread'), middle:document.getElementById('middleSpread'), ring:document.getElementById('ringSpread'), pinky:document.getElementById('pinkySpread') };
+    const spreadAxisSel=document.getElementById('spreadAxis');
+    Object.keys(spreads).forEach(f => spreads[f].addEventListener('input', () => { fingerState[handSideSel.value][f].spread = Number(spreads[f].value); updateFingerPose(handSideSel.value, f); }));
+    spreadAxisSel.addEventListener('change', () => updateAllFingers(handSideSel.value));
+    document.getElementById('fingersSpreadReset').addEventListener('click', () => { ['thumb','index','middle','ring','pinky'].forEach(f => { fingerState[handSideSel.value][f].spread=0; spreads[f].value='0'; updateFingerPose(handSideSel.value,f); }); });
+    document.getElementById('applyBodyPreset').addEventListener('click', () => { const key=document.getElementById('bodyPreset').value; setBodyPreset(key); });
+    document.getElementById('bodyReset').addEventListener('click', resetBody);
+    const bindRange=(id,key)=>{ const el=document.getElementById(id); el.addEventListener('input', ()=>{ params[key]=Number(el.value); applyBodyParams(); }); };
+    bindRange('heightScale','heightScale'); bindRange('headScale','headScale'); bindRange('shoulderWidth','shoulderWidth'); bindRange('hipWidth','hipWidth'); bindRange('torsoLen','torsoLen'); bindRange('legLen','legLen'); bindRange('armLen','armLen'); bindRange('bodyThickness','bodyThickness');
+
+    // ===== プリセット保存（LocalStorage & JSON） =====
+    function captureCharacterPreset(){
+      const wrist = { L:{ pitch:Number(wPitch.value||0), yaw:Number(wYaw.value||0), roll:Number(wRoll.value||0) }, R:{ pitch:0, yaw:0, roll:0 } };
+      const bonesRot = []; boneList.forEach(({ bone, name }) => { bonesRot.push({ name, rot:[bone.rotation.x, bone.rotation.y, bone.rotation.z], pos:[bone.position.x, bone.position.y, bone.position.z], scl:[bone.scale.x, bone.scale.y, bone.scale.z] }); });
+      return { version:1, profile:activeBoneProfile, fov:camera.fov, light:{ preset:document.getElementById('lightPreset').value, intensity:Number(lightIntensity.value) }, body:{ ...params }, fingers:JSON.parse(JSON.stringify(fingerState)), wrist, bones:bonesRot, savedAt:new Date().toISOString() };
+    }
+    function applyCharacterPreset(data){ if(!data) return;
+      if (typeof data.fov==='number'){ camera.fov=data.fov; camera.updateProjectionMatrix(); const fovEl=document.getElementById('fov'); const fovv=document.getElementById('fovv'); if(fovEl) fovEl.value=String(data.fov); if(fovv) fovv.textContent=String(data.fov); }
+      if (data.light){ const lp=document.getElementById('lightPreset'); const li=document.getElementById('lightIntensity'); if(lp&&data.light.preset) lp.value=data.light.preset; if(li&&typeof data.light.intensity==='number') li.value=String(data.light.intensity); applyLightPreset(lp.value, Number(li.value)); }
+      if (data.body){ Object.assign(params, data.body); applyBodyParams(); ['heightScale','headScale','shoulderWidth','hipWidth','torsoLen','legLen','armLen','bodyThickness'].forEach(k=>{ const el=document.getElementById(k); if(el&&data.body[k]!=null) el.value=String(data.body[k]); }); }
+      if (data.fingers){ ['L','R'].forEach(side=>{ ['thumb','index','middle','ring','pinky'].forEach(f=>{ const st=data.fingers?.[side]?.[f]; if(!st) return; fingerState[side][f].curl=Number(st.curl||0); fingerState[side][f].spread=Number(st.spread||0); updateFingerPose(side,f); }); }); }
+      if (data.wrist){ ['L','R'].forEach(side=>{ const w=data.wrist[side]; if(!w) return; setWristRotation(side, Number(w.pitch||0), Number(w.yaw||0), Number(w.roll||0)); if(handSideSel?.value===side){ wPitch.value=String(w.pitch||0); wYaw.value=String(w.yaw||0); wRoll.value=String(w.roll||0); } }); }
+      if (Array.isArray(data.bones) && boneList?.length){ data.bones.forEach(bd=>{ const item=boneList.find(bl=>bl.name===bd.name); if(!item) return; const bone=item.bone; if(bd.rot) bone.rotation.set(bd.rot[0], bd.rot[1], bd.rot[2]); if(bd.pos) bone.position.set(bd.pos[0], bd.pos[1], bd.pos[2]); if(bd.scl) bone.scale.set(bd.scl[0], bd.scl[1], bd.scl[2]); }); }
+    }
+    const LS_KEY_PREFIX='ref3d_char_';
+    function refreshPresetList(){ const list=document.getElementById('presetList'); const keys=Object.keys(localStorage).filter(k=>k.startsWith(LS_KEY_PREFIX)); list.innerHTML='<option>(保存済みなし)</option>'; keys.forEach(k=>{ const opt=document.createElement('option'); opt.value=k; const name=k.replace(LS_KEY_PREFIX,''); opt.textContent=name; list.appendChild(opt); }); }
+    document.getElementById('presetSaveLocal').addEventListener('click', () => { const name=(document.getElementById('presetName').value||'').trim(); if(!name) return alert('プリセット名を入力してください'); const data=captureCharacterPreset(); localStorage.setItem(LS_KEY_PREFIX+name, JSON.stringify(data)); refreshPresetList(); alert('保存しました'); });
+    document.getElementById('presetLoadLocal').addEventListener('click', () => { const sel=document.getElementById('presetList').value; if(!sel||sel==='(保存済みなし)') return alert('保存済みプリセットがありません'); const raw=localStorage.getItem(sel); if(!raw) return; try{ applyCharacterPreset(JSON.parse(raw)); }catch{ alert('プリセット読込に失敗しました'); } });
+    document.getElementById('presetDeleteLocal').addEventListener('click', () => { const sel=document.getElementById('presetList').value; if(!sel||sel==='(保存済みなし)') return; localStorage.removeItem(sel); refreshPresetList(); });
+    function downloadText(text, filename){ const a=document.createElement('a'); document.body.appendChild(a); const url=URL.createObjectURL(new Blob([text], { type:'application/json' })); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url); document.body.removeChild(a); }
+    document.getElementById('presetExportJSON').addEventListener('click', () => { const name=(document.getElementById('presetName').value||'preset'); const data=captureCharacterPreset(); downloadText(JSON.stringify(data,null,2), `${name}.json`); });
+    document.getElementById('presetImportJSON').addEventListener('change', (ev) => { const f=ev.target.files?.[0]; if(!f) return; const fr=new FileReader(); fr.onload=()=>{ try{ const data=JSON.parse(fr.result); applyCharacterPreset(data); alert('JSONプリセットを適用しました'); }catch(e){ alert('JSONの解析に失敗しました'); } }; fr.readAsText(f); });
+    refreshPresetList();
+
+    // ボーンプロファイルUI
+    document.getElementById('applyBoneProfile').addEventListener('click', () => { activeBoneProfile=document.getElementById('boneProfile').value; alert(`ボーンプロファイルを ${activeBoneProfile} に切り替えました`); });
+    document.getElementById('applyCustomMapping').addEventListener('click', () => { try{ const raw=document.getElementById('boneProfileJSON').value; const obj=JSON.parse(raw); const conv={}; Object.keys(obj).forEach(role=>{ conv[role]=(obj[role]||[]).map(s=>new RegExp(s,'i')); }); customBoneProfile=conv; activeBoneProfile='custom'; alert('カスタムマッピングを適用しました'); }catch(e){ alert('JSONの解析に失敗しました。形式を確認してください。'); } });
+
+    // キャラ読み込み
+    document.getElementById('fileChar').addEventListener('change', async (ev) => {
+      const f = ev.target.files?.[0]; if (!f) return;
+      const url = URL.createObjectURL(f);
+      document.getElementById('charName').textContent = '読み込み中…';
+      try {
+        const gltf = await gltfLoader.loadAsync(url);
+        contentRoot.clear();
+        const obj = gltf.scene;
+        obj.traverse((n) => {
+          if (n.isMesh && n.material) {
+            if (n.material.map) n.material.map.colorSpace = THREE.SRGBColorSpace;
+            if (n.material.emissiveMap) n.material.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            n.material.needsUpdate = true;
+            n.material.envMapIntensity = Number(envInt.value);
+          }
+        });
+        contentRoot.add(obj);
+        frameObject(obj);
+        outlinePass.selectedObjects = [obj];
+        document.getElementById('charName').textContent = f.name;
+        // 骨初期化
+        collectBodyBones(obj); storeInitialRotations(obj); storeInitialPosScale(obj); charRoot = obj;
+        // 指初期化
+        ['L','R'].forEach(side=>['thumb','index','middle','ring','pinky'].forEach(f=>{ fingerState[side][f].curl=0; fingerState[side][f].spread=0; }));
+        updateAllFingers('L'); updateAllFingers('R');
+        // 体型初期適用
+        applyBodyParams();
+      } catch (e) { console.error(e); document.getElementById('charName').textContent = '読み込み失敗: ' + e.message; }
+      finally { URL.revokeObjectURL(url); }
+    });
+
+    // スクショ保存
+    document.getElementById('shot').addEventListener('click', () => {
+      composer.render();
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = (document.getElementById('charName').textContent || 'shot') + '.png';
+      a.click();
+    });
+
+    // ループ＆リサイズ
+    const clock = new THREE.Clock();
+    function tick() {
+      const dt = clock.getDelta();
+      controls.update();
+      composer.render(dt);
+      requestAnimationFrame(tick);
+    }
+    tick();
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      composer.setSize(window.innerWidth, window.innerHeight);
+      outlinePass.resolution.set(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
